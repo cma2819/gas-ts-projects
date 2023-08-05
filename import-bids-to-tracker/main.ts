@@ -5,5 +5,9 @@ const main = () => {
 
     const trackerModule = tracker(props.tracker);
 
-    Logger.log(trackerModule.loginTracker());
+    const {csrftoken, sessionId} = trackerModule.loginTracker();
+    if (!csrftoken || !sessionId) {
+        throw new Error('Failed');
+    }
+    trackerModule.postBids(bids, {csrfToken: csrftoken, sessionId});
 }

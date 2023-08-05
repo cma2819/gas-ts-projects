@@ -74,7 +74,186 @@ const tracker = (trackerProps: Properties["tracker"]) => ({
         return login(cookies, bodyCsrfToken);
     },
 
-    updateBids: (bids: Bid[], {csrfToken, sessionId}: TrackerSessions) => {
-        
+    postBids: (bids: Bid[], sessions: TrackerSessions) => {
+        const findBid = (bid: Bid): string | null => {
+            const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=bid&run=${bid.runPk}&name=${bid.name}`;
+
+            const response = UrlFetchApp.fetch(searchUrl);
+            const data = JSON.parse(response.getContentText());
+
+            const first = data[0];
+
+            return first?.pk ?? null
+        }
+
+        const checkRunIsBackup = (runPk: string): boolean => {
+            const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=run&id=${runPk}`;
+
+            const response = UrlFetchApp.fetch(searchUrl);
+            const data = JSON.parse(response.getContentText());
+
+            const first = data[0];
+
+            if (!first) {
+                throw new Error(`Run is not found:${runPk}`)
+            }
+
+            return first.fields['order'] === null;
+        }
+
+        const listBidTargets = (bidPk: string): string[] => {
+            const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=bidtarget&parent=${bidPk}`;
+
+            const response = UrlFetchApp.fetch(searchUrl);
+            const data = JSON.parse(response.getContentText());
+
+            return data?.map(d => d.pk) ?? []
+        }
+
+        const findAlreadyExistsChoice = (bidPk: string, name: string) => {
+            const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=bidtarget&parent=${bidPk}&name=${encodeURIComponent(name)}`;
+
+            const response = UrlFetchApp.fetch(searchUrl);
+            const data = JSON.parse(response.getContentText());
+
+            const first = data[0];
+
+            return first?.pk ?? null
+        }
+
+        type Payload = {[k: string]: string};
+
+        const makeBidProps = (bid: Bid, runIsBackup: boolean): Payload => ({
+            type: 'bid',
+            speedrun: bid.runPk,
+            name: bid.name,
+            description: bid.description,
+            shortdescription: bid.short,
+            state: runIsBackup ? 'HIDDEN' : 'OPENED',
+            ... (bid.type === 'choice' ? {
+                istarget: 'False',
+                allowuseroptions: bid.allowedUserOptions ? 'True' : 'False',
+            } : {}),
+            ... (bid.type === 'challenge' ? {
+                istarget: 'True',
+                goal: String(bid.target),
+            } : {}),
+        })
+
+        const makeBidTargetProps = (choice: Choice, bidPk: string): Payload => ({
+            type: 'bidtarget',
+            istarget: 'True',
+            state: 'OPENED',
+            parent: bidPk,
+            name: choice.name,
+            description: choice.description,
+        })
+
+        const editModel = (payload: Payload, pk: string, {csrfToken, sessionId}: TrackerSessions): string => {
+            const editUrl = `${trackerProps.baseUrl}/api/v1/edit/`;
+
+            const response = UrlFetchApp.fetch(editUrl, {
+                method: 'post',
+                headers: {                    
+                    "X-CSRFToken": csrfToken,
+                    "csrftoken": csrfToken,
+                    "Referer": `${trackerProps.baseUrl}/admin/tracker`,
+                    "Cookie": `csrftoken=${csrfToken}; sessionid=${sessionId};`
+                },
+                contentType: "application/x-www-form-urlencoded",
+                payload: {
+                    ...payload,
+                    id: pk,
+                },
+            });
+
+            if (response.getResponseCode() > 299) {
+                Logger.log(payload);
+                Logger.log(response.getContentText());
+            }
+            const data = JSON.parse(response.getContentText());
+            const first = data[0];
+            if (response.getResponseCode() > 299 || !first ) {
+                throw new Error(response.getContentText());
+            }
+            return first['pk'];
+        }
+
+        const addModel = (payload: Payload, {csrfToken, sessionId}: TrackerSessions): string => {
+            const addUrl = `${trackerProps.baseUrl}/api/v1/add/`;
+            
+            const response = UrlFetchApp.fetch(addUrl, {
+                method: 'post',
+                headers: {                    
+                    "X-CSRFToken": csrfToken,
+                    "csrftoken": csrfToken,
+                    "Referer": `${trackerProps.baseUrl}/admin/tracker`,
+                    "Cookie": `csrftoken=${csrfToken}; sessionid=${sessionId};`
+                },
+                contentType: "application/x-www-form-urlencoded",
+                payload,
+                muteHttpExceptions: true,
+            });
+
+            if (response.getResponseCode() > 299) {
+                Logger.log(payload);
+                Logger.log(response.getContentText());
+            }
+            const data = JSON.parse(response.getContentText());
+            const first = data[0];
+            if (response.getResponseCode() > 299 || !first ) {
+                throw new Error(response.getContentText());
+            }
+            return first['pk'];
+        }
+
+        const deleteModel = (type: string, pk: string, {csrfToken, sessionId}: TrackerSessions) => {
+            const deleteUrl = `${trackerProps.baseUrl}/api/v1/delete/`;
+
+            const response = UrlFetchApp.fetch(deleteUrl, {
+                method: 'post',
+                headers: {                    
+                    "X-CSRFToken": csrfToken,
+                    "csrftoken": csrfToken,
+                    "Referer": `${trackerProps.baseUrl}/admin/tracker`,
+                    "Cookie": `csrftoken=${csrfToken}; sessionid=${sessionId};`
+                },
+                contentType: "application/x-www-form-urlencoded",
+                payload: {
+                    type,
+                    id: pk
+                },
+            });
+        }
+
+        for (const bid of bids) {
+            const isBackup = checkRunIsBackup(bid.runPk);
+
+            const payload = makeBidProps(bid, isBackup);
+            const existsBidPk = findBid(bid);
+            const bidPk = existsBidPk ? editModel(payload, Number(existsBidPk).toFixed(), sessions) : addModel(payload, sessions);
+
+            if (bid.type === 'choice') {
+                const existsBidTargetPks = listBidTargets(bidPk);
+
+                for (const idx in bid.choices) {
+                    const c = bid.choices[idx];
+                    const existsPk = findAlreadyExistsChoice(bidPk, c.name);
+                    const payload = makeBidTargetProps(c, Number(bidPk).toFixed());
+
+                    existsPk ? editModel(payload, Number(existsPk).toFixed(), sessions) : addModel(payload, sessions);
+                }
+
+                if (existsBidTargetPks.length > bid.choices.length) {
+                    const restExistsTargetPks = existsBidTargetPks.slice(-1 * (existsBidTargetPks.length - bid.choices.length));
+
+                    for (const deletePk of restExistsTargetPks) {
+                        deleteModel('bidtarget', Number(deletePk).toFixed(), sessions);
+                    }
+                }
+            }
+            Utilities.sleep(500);
+            Logger.log(`Done to update bid ${JSON.stringify(bid)}`)
+        }
     }
 });
