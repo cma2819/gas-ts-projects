@@ -1,3 +1,7 @@
+import { runtimeProperties } from './gas';
+import { loadBidsFromSheet } from './sheet';
+import { tracker } from './tracker';
+
 const main = () => {
     const props = runtimeProperties();
 

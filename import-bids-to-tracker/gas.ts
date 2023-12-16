@@ -1,4 +1,4 @@
-type Properties = {
+export type Properties = {
     tracker: {
         username: string;
         password: string;
@@ -7,7 +7,7 @@ type Properties = {
     }
 }
 
-const runtimeProperties = (): Properties => {
+export const runtimeProperties = (): Properties => {
     const scriptProperties = PropertiesService.getScriptProperties();
     const [
         username,

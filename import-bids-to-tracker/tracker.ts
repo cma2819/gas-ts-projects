@@ -1,9 +1,12 @@
+import { Properties } from './gas';
+import { Bid, Choice } from './sheet';
+
 type TrackerSessions = {
     csrfToken: string;
     sessionId: string;
 };
 
-const tracker = (trackerProps: Properties["tracker"]) => ({
+export const tracker = (trackerProps: Properties["tracker"]) => ({
     loginTracker: () => {
         const pickCookies = (headers: object): string[] => {
             if (typeof headers["Set-Cookie"] === "undefined") {
@@ -76,9 +79,16 @@ const tracker = (trackerProps: Properties["tracker"]) => ({
 
     postBids: (bids: Bid[], sessions: TrackerSessions) => {
         const findBid = (bid: Bid): string | null => {
-            const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=bid&run=${bid.runPk}&name=${bid.name}`;
+            const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=bid&run=${bid.runPk}&name=${encodeURIComponent(bid.name)}`;
 
-            const response = UrlFetchApp.fetch(searchUrl);
+            const response = UrlFetchApp.fetch(searchUrl, {
+                headers: {                    
+                    "X-CSRFToken": sessions.csrfToken,
+                    "csrftoken": sessions.csrfToken,
+                    "Referer": `${trackerProps.baseUrl}/admin/tracker`,
+                    "Cookie": `csrftoken=${sessions.csrfToken}; sessionid=${sessions.sessionId};`
+                },
+            });
             const data = JSON.parse(response.getContentText());
 
             const first = data[0];
@@ -104,7 +114,14 @@ const tracker = (trackerProps: Properties["tracker"]) => ({
         const listBidTargets = (bidPk: string): string[] => {
             const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=bidtarget&parent=${bidPk}`;
 
-            const response = UrlFetchApp.fetch(searchUrl);
+            const response = UrlFetchApp.fetch(searchUrl, {
+                headers: {                    
+                    "X-CSRFToken": sessions.csrfToken,
+                    "csrftoken": sessions.csrfToken,
+                    "Referer": `${trackerProps.baseUrl}/admin/tracker`,
+                    "Cookie": `csrftoken=${sessions.csrfToken}; sessionid=${sessions.sessionId};`
+                },
+            });
             const data = JSON.parse(response.getContentText());
 
             return data?.map(d => d.pk) ?? []
@@ -113,7 +130,14 @@ const tracker = (trackerProps: Properties["tracker"]) => ({
         const findAlreadyExistsChoice = (bidPk: string, name: string) => {
             const searchUrl = `${trackerProps.baseUrl}/api/v1/search/?type=bidtarget&parent=${bidPk}&name=${encodeURIComponent(name)}`;
 
-            const response = UrlFetchApp.fetch(searchUrl);
+            const response = UrlFetchApp.fetch(searchUrl, {
+                headers: {                    
+                    "X-CSRFToken": sessions.csrfToken,
+                    "csrftoken": sessions.csrfToken,
+                    "Referer": `${trackerProps.baseUrl}/admin/tracker`,
+                    "Cookie": `csrftoken=${sessions.csrfToken}; sessionid=${sessions.sessionId};`
+                },
+            });
             const data = JSON.parse(response.getContentText());
 
             const first = data[0];
@@ -123,20 +147,19 @@ const tracker = (trackerProps: Properties["tracker"]) => ({
 
         type Payload = {[k: string]: string};
 
-        const makeBidProps = (bid: Bid, runIsBackup: boolean): Payload => ({
+        const makeBidProps = (bid: Bid): Payload => ({
             type: 'bid',
             speedrun: bid.runPk,
             name: bid.name,
             description: bid.description,
             shortdescription: bid.short,
-            state: runIsBackup ? 'HIDDEN' : 'OPENED',
+            state: 'HIDDEN',
             ... (bid.type === 'choice' ? {
                 istarget: 'False',
                 allowuseroptions: bid.allowedUserOptions ? 'True' : 'False',
             } : {}),
             ... (bid.type === 'challenge' ? {
                 istarget: 'True',
-                goal: String(bid.target),
             } : {}),
         })
 
@@ -227,9 +250,7 @@ const tracker = (trackerProps: Properties["tracker"]) => ({
         }
 
         for (const bid of bids) {
-            const isBackup = checkRunIsBackup(bid.runPk);
-
-            const payload = makeBidProps(bid, isBackup);
+            const payload = makeBidProps(bid);
             const existsBidPk = findBid(bid);
             const bidPk = existsBidPk ? editModel(payload, Number(existsBidPk).toFixed(), sessions) : addModel(payload, sessions);
 
